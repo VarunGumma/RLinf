@@ -185,7 +185,7 @@ actor:
 # ---------------------------------------------------------------------------
 # VLM Actor (FSDP — trained in phase B with GRPO)
 # PLACEHOLDER: Replace with your actual VLM checkpoint path.
-# Supported VLM model types: qwen2.5_vl, qwen3_vl, qwen3_vl_moe, qwen3.5_vl, qwen3.5_vl_moe
+# Supported VLM model types: qwen2.5_vl, qwen3_vl, qwen3_vl_moe, qwen3.5, qwen3.5_moe
 # ---------------------------------------------------------------------------
 vlm_actor:
   group_name: "VLMActorGroup"

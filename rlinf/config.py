@@ -51,8 +51,6 @@ class SupportedModel(Enum):
     QWEN3_VL_MOE = ("qwen3_vl_moe", "reasoning")
     QWEN3_5 = ("qwen3.5", "reasoning")
     QWEN3_5_MOE = ("qwen3.5_moe", "reasoning")
-    QWEN3_5_VL = ("qwen3.5_vl", "reasoning")
-    QWEN3_5_VL_MOE = ("qwen3.5_vl_moe", "reasoning")
 
     # Embodied models
     OPENVLA = ("openvla", "embodied")
@@ -72,8 +70,6 @@ class SupportedModel(Enum):
     QWEN2_5_VL_SFT = ("qwen2.5_vl", "sft")
     QWEN3_VL_SFT = ("qwen3_vl", "sft")
     QWEN3_VL_MOE_SFT = ("qwen3_vl_moe", "sft")
-    QWEN3_5_VL_SFT = ("qwen3.5_vl", "sft")
-    QWEN3_5_VL_MOE_SFT = ("qwen3.5_vl_moe", "sft")
 
     def __new__(cls, value, category):
         obj = object.__new__(cls)
