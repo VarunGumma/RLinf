@@ -30,8 +30,40 @@ All notable changes to the **Agentic VLM + VLA** feature are documented below.
     frozen VLA, which predicts actions and computes the **MSE between predicted
     and ground-truth actions**. The negated MSE is the GRPO reward. Advantages
     are computed per group and the VLM is updated via policy gradient.
-- Supports configurable `alternating_interval`, `initial_phase`, checkpoint
-  resume, evaluation, and async metric logging.
+- Supports configurable phase durations, checkpoint resume, evaluation, and
+  async metric logging.
+
+#### Dr. GRPO advantage variant
+- New `"dr_grpo"` advantage type registered in
+  `rlinf/algorithms/advantages.py`. Dr. GRPO corrects the token-aggregation
+  bias of standard GRPO by normalising every token in a group by the **group
+  mean response length** instead of per-response length. This prevents the
+  model from being incentivised towards verbosity.
+  - Reference: *"Understanding R1-Zero-Like Training: A Critical Perspective"*
+    (arXiv 2503.20783).
+  - Set `algorithm.vlm_adv_type: dr_grpo` in config to enable.
+
+#### KL divergence penalty for VLM training
+- Added an optional **KL divergence penalty** against a reference VLM policy
+  during Phase B (VLM GRPO training).
+  - Configured via `algorithm.vlm_kl_coeff` (default `0.0` = disabled) and
+    `algorithm.vlm_kl_type` (default `"low_var_kl"`; also supports `"kl"`,
+    `"abs"`, `"mse"`).
+  - The penalty reuses the existing `kl_penalty()` utility from
+    `rlinf/algorithms/utils.py` and the KL integration in the FSDPActor
+    training loop.
+  - The runner passes `vlm_kl_coeff` and `vlm_kl_type` to the VLM actor's
+    `run_vlm_grpo_training()`.
+
+#### Decoupled phase alternating intervals
+- VLA and VLM training phases can now run for **different** numbers of steps
+  before switching:
+  - `runner.vla_alternating_interval` — steps per VLA (Phase A) block.
+  - `runner.vlm_alternating_interval` — steps per VLM (Phase B) block.
+  - The legacy `runner.alternating_interval` is still accepted as a fallback
+    when the per-phase keys are absent (backward compatible).
+- The runner uses a `_current_phase_interval` property to dispatch the correct
+  interval for the active phase.
 
 #### Reward — `VLARewardWorker` and `VLALossReward`
 - New reward worker (`rlinf/workers/reward/vla_reward_worker.py`) that holds a
@@ -59,7 +91,7 @@ All notable changes to the **Agentic VLM + VLA** feature are documented below.
 #### Example config and entry-point
 - New Hydra config `examples/agentic_vlm_vla/config/base_agentic.yaml` with
   full documentation of every section (cluster, runner, algorithm, env, VLA
-  actor, VLM actor, VLA rollout, VLA reward).
+  actor, VLM actor, VLA rollout, VLA reward, KL, Dr. GRPO).
 - New entry-point script `examples/agentic_vlm_vla/train_agentic.py`.
 
 ### Changed
@@ -72,3 +104,7 @@ All notable changes to the **Agentic VLM + VLA** feature are documented below.
   rollouts only occur when the VLM is trained via GRPO.
 - Used `isinstance(x, (list, tuple))` instead of `list | tuple` for broader
   Python compatibility in `run_sft_step`.
+- **Decoupled intervals (breaking config change):** The single
+  `runner.alternating_interval` is superseded by the per-phase
+  `runner.vla_alternating_interval` / `runner.vlm_alternating_interval` pair.
+  The old key is still read as a fallback.

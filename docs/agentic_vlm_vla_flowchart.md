@@ -2,24 +2,31 @@
 
 This document describes the training architecture for the `agentic_vlm_vla`
 task type, which alternates between supervised VLA training (Phase A) and
-GRPO-based VLM training (Phase B).
+GRPO-based VLM training (Phase B) with independently configurable phase
+durations.
 
 ---
 
 ## System overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    AgenticVLMVLARunner                               │
-│                                                                     │
-│   global_step  ──►  phase switching every alternating_interval      │
-│                     ┌──────────┐      ┌──────────┐                  │
-│                     │ Phase A  │ ◄──► │ Phase B  │                  │
-│                     │  (VLA)   │      │  (VLM)   │                  │
-│                     └──────────┘      └──────────┘                  │
-│                                                                     │
-│   On switch VLA→VLM:  sync VLA weights → VLARewardWorker            │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       AgenticVLMVLARunner                               │
+│                                                                         │
+│   global_step  ──►  phase switching (decoupled intervals)               │
+│                     ┌──────────────────┐   ┌──────────────────┐         │
+│                     │     Phase A      │   │     Phase B      │         │
+│                     │  (VLA, N_vla     │◄─►│  (VLM, N_vlm     │         │
+│                     │   steps)         │   │   steps)         │         │
+│                     └──────────────────┘   └──────────────────┘         │
+│                                                                         │
+│   On switch VLA→VLM:  sync VLA weights → VLARewardWorker                │
+│                                                                         │
+│   VLM training supports:                                                │
+│     • Standard GRPO  (vlm_adv_type: grpo)                               │
+│     • Dr. GRPO       (vlm_adv_type: dr_grpo) — length-bias corrected    │
+│     • Optional KL penalty against reference policy (vlm_kl_coeff > 0)   │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -64,13 +71,13 @@ with RL. The VLM text simply enriches the VLA's text prompt.
 
 ---
 
-## Phase B — VLM GRPO Training
+## Phase B — VLM GRPO / Dr. GRPO Training
 
 The VLA is **frozen**. Rollouts are generated only in this phase.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  Phase B  (VLM trains via GRPO, VLA frozen)                      │
+│  Phase B  (VLM trains via GRPO / Dr. GRPO, VLA frozen)           │
 │                                                                  │
 │  Step 1 — VLM rollout                                            │
 │  ┌───────────┐   generate_vlm_rollout(group_size=K)              │
@@ -99,58 +106,76 @@ The VLA is **frozen**. Rollouts are generated only in this phase.
 │  └────────────────────────────────────────────────────────┘      │
 │                         │                                        │
 │                         ▼                                        │
-│  Step 3 — GRPO advantages                                        │
+│  Step 3 — Advantages (GRPO or Dr. GRPO)                          │
 │  ┌────────────────────────────────────────────┐                  │
 │  │  calculate_adv_and_returns(                │                  │
 │  │    task_type="reasoning",                  │                  │
-│  │    adv_type="grpo",                        │                  │
+│  │    adv_type="grpo" | "dr_grpo",            │                  │
 │  │    rewards=rewards,                        │                  │
 │  │    group_size=K                            │                  │
 │  │  )                                         │                  │
+│  │                                            │                  │
+│  │  GRPO:    z-score within group             │                  │
+│  │  Dr.GRPO: z-score + group-mean-length      │                  │
+│  │           scaling (corrects verbosity bias) │                  │
 │  │  → advantages, returns                     │                  │
 │  └────────────────┬───────────────────────────┘                  │
 │                   │                                              │
 │                   ▼                                              │
-│  Step 4 — VLM policy-gradient update                             │
+│  Step 4 — VLM policy-gradient update (+ optional KL penalty)     │
 │  ┌────────────────────────────────────────────┐                  │
 │  │  VLM Actor (FSDPActor)                     │                  │
 │  │  run_vlm_grpo_training(                    │                  │
 │  │    advantages=advantages,                  │                  │
-│  │    rewards=rewards                         │                  │
+│  │    rewards=rewards,                        │                  │
+│  │    vlm_kl_coeff=β,   ← KL weight          │                  │
+│  │    vlm_kl_type="low_var_kl"                │                  │
 │  │  )                                         │                  │
+│  │                                            │                  │
+│  │  loss = policy_gradient_loss               │                  │
+│  │       + β × KL(π_θ ∥ π_ref)   (if β > 0)  │                  │
 │  └────────────────────────────────────────────┘                  │
 │                                                                  │
 │  Output: vlm/mean_reward, vlm/mean_advantage, vlm_train/*        │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Key point:** The reward is the **MSE between predicted and ground-truth
-actions** in continuous space — it is *not* the VLA training loss (logprobs /
-cross-entropy). For pi0-fast the VLA automatically detokenises predicted action
-tokens back to continuous values via `output_transform` before the MSE is
-computed.
+**Key points:**
+- The reward is the **MSE between predicted and ground-truth actions** in
+  continuous space — it is *not* the VLA training loss (logprobs /
+  cross-entropy). For pi0-fast the VLA automatically detokenises predicted
+  action tokens back to continuous values via `output_transform` before the MSE
+  is computed.
+- **Dr. GRPO** scales every token in the group by the group's mean response
+  length instead of each response's individual length, preventing longer outputs
+  from receiving disproportionate gradient (arXiv 2503.20783).
+- **KL penalty** (`vlm_kl_coeff > 0`) constrains the VLM policy to stay close
+  to a reference policy, preventing reward hacking. Supports `"kl"`, `"abs"`,
+  `"mse"`, and `"low_var_kl"` penalty types.
 
 ---
 
 ## Phase switching and weight sync
 
 ```
-  Phase A (VLA trains)                    Phase B (VLM trains via GRPO)
- ┌────────────────────┐                  ┌─────────────────────────────┐
- │  N steps of VLA    │  ── switch ──►   │  N steps of VLM GRPO       │
- │  supervised (SFT)  │                  │  with frozen-VLA rewards    │
- │  training          │  ◄── switch ──   │                             │
- └────────────────────┘                  └─────────────────────────────┘
-         │                                         ▲
-         │  On VLA→VLM transition:                 │
-         │    VLA actor state_dict ──────────────►  │
-         │    loaded into VLARewardWorker           │
-         │    (so reward uses latest VLA weights)   │
-         └─────────────────────────────────────────┘
+  Phase A (VLA trains)                       Phase B (VLM trains via GRPO)
+ ┌────────────────────────┐                 ┌─────────────────────────────┐
+ │  N_vla steps of VLA    │  ── switch ──►  │  N_vlm steps of VLM GRPO   │
+ │  supervised (SFT)      │                 │  (or Dr. GRPO) with frozen  │
+ │  training              │  ◄── switch ──  │  VLA rewards + optional KL  │
+ └────────────────────────┘                 └─────────────────────────────┘
+         │                                            ▲
+         │  On VLA→VLM transition:                    │
+         │    VLA actor state_dict ─────────────────►  │
+         │    loaded into VLARewardWorker              │
+         │    (so reward uses latest VLA weights)      │
+         └────────────────────────────────────────────┘
 ```
 
-The alternating interval is configurable (`runner.alternating_interval`,
-default: 10 steps).
+Phase intervals are **independently configurable**:
+- `runner.vla_alternating_interval` — steps per VLA block (default: 10).
+- `runner.vlm_alternating_interval` — steps per VLM block (default: 10).
+- The legacy `runner.alternating_interval` is accepted as a fallback for both.
 
 ---
 
@@ -190,6 +215,58 @@ ground_truth_actions [K, chunk, dim]  ────────┤
   instructions that make the VLA predict actions closer to the ground truth.
 - The MSE is computed in **environment action space** (post-`output_transform`),
   ensuring correct comparison even for tokenised models like pi0-fast.
+
+---
+
+## Dr. GRPO — length-bias correction
+
+Standard GRPO normalises each response's gradient by its own token count.
+Longer responses thus receive more total gradient, which can incentivise
+verbosity.  **Dr. GRPO** fixes this:
+
+```
+Standard GRPO (per-response normalisation):
+  loss_i = (1 / |o_i|) × Σ_t  advantage_t × log π(t)
+
+Dr. GRPO (group-mean-length normalisation):
+  L̄ = mean(|o_1|, |o_2|, …, |o_K|)            ← group mean length
+  loss_i = (L̄ / |o_i|) × (1 / L̄) × Σ_t  advantage_t × log π(t)
+         ≡  (1 / |o_i|) × scale_i × Σ_t  advantage_t × log π(t)
+  where scale_i = L̄ / |o_i|
+```
+
+Every token in the group is scaled by `group_mean_len / response_len`, so
+each response contributes equally regardless of its verbosity.
+
+Set `algorithm.vlm_adv_type: dr_grpo` in config to enable.
+
+Reference: *"Understanding R1-Zero-Like Training: A Critical Perspective"*
+(arXiv 2503.20783).
+
+---
+
+## KL divergence penalty
+
+An optional KL divergence penalty constrains the VLM policy to stay close to
+a reference policy during Phase B training:
+
+```
+total_loss = GRPO_policy_gradient_loss + β × KL(π_θ ∥ π_ref)
+```
+
+where `β = vlm_kl_coeff` (default `0.0` = disabled).
+
+Supported penalty types (`vlm_kl_type`):
+
+| Type            | Formula                                          |
+|-----------------|--------------------------------------------------|
+| `"kl"` / `"k1"` | log π_θ − log π_ref                              |
+| `"abs"`         | |log π_θ − log π_ref|                            |
+| `"mse"` / `"k2"`| 0.5 × (log π_θ − log π_ref)²                    |
+| `"low_var_kl"` / `"k3"` | clamp(exp(log π_ref − log π_θ) − (log π_ref − log π_θ) − 1) |
+
+The `"low_var_kl"` variant (Schulman, 2020) is the default and provides a
+lower-variance estimator of the KL divergence.
 
 ---
 
