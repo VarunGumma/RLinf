@@ -91,6 +91,7 @@ SUPPORTED_TASK_TYPE = [
     "reasoning_eval",
     "coding_online_rl",
     "sft",
+    "agentic_vlm_vla",
 ]
 SUPPORTED_TRAINING_BACKENDS = ["megatron", "fsdp"]
 __all__ = ["build_config"]
@@ -1019,6 +1020,47 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_agentic_vlm_vla_cfg(cfg: DictConfig) -> DictConfig:
+    """Validate configuration for the agentic VLM + VLA alternating training.
+
+    This task type reuses the embodied VLA pipeline for phase A and a
+    GRPO-style VLM update for phase B.  The validation ensures the
+    embodied-side constraints hold and that the alternating-phase specific
+    fields are present.
+    """
+    # The VLA side uses the same embodied model constraints
+    assert get_supported_model(cfg.actor.model.model_type).category == "embodied", (
+        f"VLA actor model type '{cfg.actor.model.model_type}' must be an embodied model."
+    )
+
+    with open_dict(cfg):
+        # Ensure alternating interval is positive
+        cfg.runner.alternating_interval = cfg.runner.get("alternating_interval", 10)
+        assert cfg.runner.alternating_interval > 0, (
+            "runner.alternating_interval must be > 0"
+        )
+        cfg.runner.initial_phase = cfg.runner.get("initial_phase", "vla")
+        assert cfg.runner.initial_phase in ("vla", "vlm"), (
+            "runner.initial_phase must be 'vla' or 'vlm'"
+        )
+
+        # Weight sync interval for the embodied loop
+        cfg.runner.weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
+        assert cfg.runner.weight_sync_interval > 0
+
+        # VLA reward section must exist
+        assert cfg.get("vla_reward", None) is not None, (
+            "vla_reward config section is required for agentic_vlm_vla task"
+        )
+
+        # GRPO group_size must be > 1 for the VLM phase
+        assert cfg.algorithm.group_size > 1, (
+            "algorithm.group_size must be > 1 for GRPO-based VLM training"
+        )
+
+    return cfg
+
+
 def validate_cfg(cfg: DictConfig) -> DictConfig:
     OmegaConf.set_struct(cfg, True)
 
@@ -1047,6 +1089,8 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
         return cfg
     elif cfg.runner.task_type == "sft":
         cfg = validate_sft_cfg(cfg)
+    elif cfg.runner.task_type == "agentic_vlm_vla":
+        cfg = validate_agentic_vlm_vla_cfg(cfg)
 
     if cfg.runner.task_type != "sft":
         if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
