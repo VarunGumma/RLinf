@@ -45,8 +45,12 @@ runner:
   save_interval: 100
   weight_sync_interval: 1
 
-  # How many steps to run each phase before switching
-  alternating_interval: 10
+  # How many steps to run each phase before switching.
+  # VLA and VLM phases can have independent durations.
+  vla_alternating_interval: 10   # steps of VLA supervised training
+  vlm_alternating_interval: 10   # steps of VLM GRPO training
+  # Legacy shorthand (sets both if the per-phase keys are absent):
+  # alternating_interval: 10
   initial_phase: "vla"  # start with VLA training
 
   resume_dir: null
@@ -63,8 +67,15 @@ algorithm:
   # (flow-matching MSE for pi0/pi0.5, cross-entropy for pi0-fast).
   # No RL advantages are computed for VLA training.
 
-  # VLM training (phase B) — GRPO advantage type
+  # VLM training (phase B) — advantage type.
+  # Supported: "grpo" (standard), "dr_grpo" (length-bias corrected)
   vlm_adv_type: grpo
+
+  # KL divergence penalty against the VLM reference policy (phase B).
+  # Set vlm_kl_coeff > 0 to enable.  The reference log-probs are
+  # computed from the frozen initial VLM weights.
+  vlm_kl_coeff: 0.0              # 0 = disabled; typical values: 0.01–0.1
+  vlm_kl_type: "low_var_kl"      # "kl", "abs", "mse", "low_var_kl"
 
   sampling_params:
     do_sample: True

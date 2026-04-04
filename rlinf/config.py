@@ -1039,11 +1039,22 @@ def validate_agentic_vlm_vla_cfg(cfg: DictConfig) -> DictConfig:
     )
 
     with open_dict(cfg):
-        # Ensure alternating interval is positive
-        cfg.runner.alternating_interval = cfg.runner.get("alternating_interval", 10)
-        assert cfg.runner.alternating_interval > 0, (
-            "runner.alternating_interval must be > 0"
+        # --- Decoupled alternating intervals ---
+        # Legacy single-value fallback
+        legacy_interval = cfg.runner.get("alternating_interval", 10)
+        cfg.runner.vla_alternating_interval = cfg.runner.get(
+            "vla_alternating_interval", legacy_interval
         )
+        cfg.runner.vlm_alternating_interval = cfg.runner.get(
+            "vlm_alternating_interval", legacy_interval
+        )
+        assert cfg.runner.vla_alternating_interval > 0, (
+            "runner.vla_alternating_interval must be > 0"
+        )
+        assert cfg.runner.vlm_alternating_interval > 0, (
+            "runner.vlm_alternating_interval must be > 0"
+        )
+
         cfg.runner.initial_phase = cfg.runner.get("initial_phase", "vla")
         assert cfg.runner.initial_phase in ("vla", "vlm"), (
             "runner.initial_phase must be 'vla' or 'vlm'"
@@ -1062,6 +1073,14 @@ def validate_agentic_vlm_vla_cfg(cfg: DictConfig) -> DictConfig:
         assert cfg.algorithm.group_size > 1, (
             "algorithm.group_size must be > 1 for GRPO-based VLM training"
         )
+
+        # VLM KL divergence defaults
+        cfg.algorithm.vlm_kl_coeff = cfg.algorithm.get("vlm_kl_coeff", 0.0)
+        cfg.algorithm.vlm_kl_type = cfg.algorithm.get("vlm_kl_type", "low_var_kl")
+        assert cfg.algorithm.vlm_kl_coeff >= 0.0, "algorithm.vlm_kl_coeff must be >= 0"
+
+        # VLM advantage type default
+        cfg.algorithm.vlm_adv_type = cfg.algorithm.get("vlm_adv_type", "grpo")
 
     return cfg
 

@@ -121,6 +121,76 @@ def compute_grpo_advantages(
     return advantages, None
 
 
+@register_advantage("dr_grpo")
+def compute_dr_grpo_advantages(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    group_size: int,
+    **kwargs,
+):
+    """Compute Dr. GRPO advantages (token-aggregation-bias corrected GRPO).
+
+    Standard GRPO normalises each response's loss by its own length, which
+    can incentivise verbosity.  Dr. GRPO instead scales every token in the
+    group by the **group mean response length**, so each sampled response
+    contributes equally regardless of its length.
+
+    Reference: "Understanding R1-Zero-Like Training: A Critical Perspective"
+    (arXiv 2503.20783).
+
+    The advantage values themselves are the same group-relative z-scores as
+    GRPO.  The difference is in how ``loss_mask`` is rescaled: each
+    response's mask is multiplied by ``group_mean_len / response_len`` so
+    that longer responses do not receive disproportionate gradient.
+
+    Args:
+        rewards: Reward or score values.  Shape: ``[num_groups * group_size]``
+            or ``[num_groups, group_size]``.
+        loss_mask: Loss mask for valid entries.  Shape:
+            ``[seq_len, num_groups * group_size]``.
+        group_size: Number of responses per prompt group.
+
+    Returns:
+        ``(advantages, None)`` where advantages has the same shape as
+        *loss_mask*.
+    """
+    # --- advantages (same z-score normalisation as standard GRPO) ----------
+    grouped_rewards = rewards.view(-1, group_size)
+
+    grouped_reward_mean = grouped_rewards.mean(dim=-1, keepdim=True).expand_as(
+        grouped_rewards
+    )
+    grouped_reward_std = grouped_rewards.std(dim=-1, keepdim=True).expand_as(
+        grouped_rewards
+    )
+
+    advantages = grouped_rewards - grouped_reward_mean
+    advantages = advantages / (grouped_reward_std + 1e-6)
+
+    advantages = (torch.zeros_like(loss_mask) + advantages.view(1, -1)) * loss_mask
+
+    # --- Dr. GRPO length correction ---------------------------------------
+    # Per-response length = number of valid (unmasked) tokens.
+    num_responses = loss_mask.shape[1]
+    per_response_len = loss_mask.sum(dim=0).float()  # [num_responses]
+
+    # Group mean length — average over the group_size responses that share
+    # the same prompt.
+    grouped_lens = per_response_len.view(-1, group_size)  # [G, K]
+    group_mean_len = grouped_lens.mean(dim=-1, keepdim=True).expand_as(
+        grouped_lens
+    )  # [G, K]
+    group_mean_len = group_mean_len.reshape(num_responses)  # [num_responses]
+
+    # Scale factor: group_mean_len / response_len (clamped to avoid div-0).
+    scale = group_mean_len / per_response_len.clamp(min=1.0)  # [num_responses]
+
+    # Broadcast [num_responses] → [seq_len, num_responses] and apply.
+    advantages = advantages * scale.unsqueeze(0)
+
+    return advantages, None
+
+
 @register_advantage("grpo_dynamic")
 def compute_grpo_dynamic_advantages(
     rewards: torch.Tensor,

@@ -22,7 +22,8 @@ The system contains two models:
 * **VLA** (Vision-Language-Action model, e.g. pi0 / pi0.5 / pi0-fast via
   OpenPI) — consumes those instructions and produces robot actions.
 
-Training alternates between two phases every ``alternating_interval`` steps:
+Training alternates between two phases with independently configurable
+intervals (``vla_alternating_interval`` / ``vlm_alternating_interval``):
 
 **Phase A — VLA training** (``phase == "vla"``):
     The VLM is frozen.  A single VLM output per sample is generated and
@@ -37,7 +38,9 @@ Training alternates between two phases every ``alternating_interval`` steps:
     which predicts actions and computes the **MSE** between predicted and
     ground-truth actions — the negated MSE becomes the GRPO reward.
     Advantages are computed within each group of K and the VLM is updated
-    via a policy-gradient (GRPO) step.
+    via a policy-gradient (GRPO / Dr. GRPO) step.  An optional KL
+    divergence penalty against a reference policy can be added
+    (``vlm_kl_coeff``).
 """
 
 import logging
@@ -108,10 +111,21 @@ class AgenticVLMVLARunner:
         self.vla_reward = vla_reward
         self.env = env
 
-        # Phase management
-        self.alternating_interval = cfg.runner.alternating_interval
+        # Phase management — decoupled intervals for VLA and VLM phases
+        self.vla_alternating_interval = cfg.runner.get(
+            "vla_alternating_interval",
+            cfg.runner.get("alternating_interval", 10),
+        )
+        self.vlm_alternating_interval = cfg.runner.get(
+            "vlm_alternating_interval",
+            cfg.runner.get("alternating_interval", 10),
+        )
         self.phase: str = cfg.runner.get("initial_phase", "vla")
         self.steps_in_current_phase = 0
+
+        # VLM KL divergence config (penalty against reference policy)
+        self.vlm_kl_coeff = cfg.algorithm.get("vlm_kl_coeff", 0.0)
+        self.vlm_kl_type = cfg.algorithm.get("vlm_kl_type", "low_var_kl")
 
         # Channels for VLA SFT training (phase A)
         self.vla_sft_channel = Channel.create("VLASft")
@@ -236,6 +250,13 @@ class AgenticVLMVLARunner:
     # ------------------------------------------------------------------
     # Phase switching
     # ------------------------------------------------------------------
+    @property
+    def _current_phase_interval(self) -> int:
+        """Return the alternating interval for the currently active phase."""
+        if self.phase == "vla":
+            return self.vla_alternating_interval
+        return self.vlm_alternating_interval
+
     def _switch_phase(self):
         old_phase = self.phase
         if self.phase == "vla":
@@ -297,7 +318,7 @@ class AgenticVLMVLARunner:
         return {f"vla_train/{k}": v for k, v in self._agg(train_metrics).items()}
 
     # ------------------------------------------------------------------
-    # Phase B — VLM training (GRPO with action-MSE reward)
+    # Phase B — VLM training (GRPO / Dr. GRPO with action-MSE reward)
     # ------------------------------------------------------------------
     def _run_vlm_training_step(self):
         """One step of VLM GRPO training using frozen-VLA action-MSE as reward.
@@ -308,8 +329,11 @@ class AgenticVLMVLARunner:
         2. For each output the frozen VLA reward worker predicts actions
            and computes the MSE between predicted and ground-truth actions.
            This MSE is converted to a reward (lower MSE → higher reward).
-        3. GRPO advantages are computed over each group of K rewards.
-        4. The VLM actor is updated with the policy-gradient loss.
+        3. GRPO (or Dr. GRPO) advantages are computed over each group of
+           K rewards.
+        4. (Optional) KL divergence penalty against a reference VLM policy
+           is added to the loss (``vlm_kl_coeff > 0``).
+        5. The VLM actor is updated with the policy-gradient loss.
         """
         group_size = self.cfg.algorithm.group_size
 
@@ -335,7 +359,7 @@ class AgenticVLMVLARunner:
             rewards = reward_data["rewards"]  # [K]
 
         with self.timer("vlm/advantages"):
-            # Compute GRPO advantages within each group.
+            # Compute GRPO / Dr. GRPO advantages within each group.
             # loss_mask shape is (seq_len=1, num_samples=K) because the
             # reasoning-side preprocess expects (seq_len, batch) and all
             # VLM outputs are valid (no padding).
@@ -349,10 +373,12 @@ class AgenticVLMVLARunner:
             )
 
         with self.timer("vlm/train"):
-            # Send advantages to VLM actor for training
+            # Send advantages + KL config to VLM actor for training
             train_handle: Handle = self.vlm_actor.run_vlm_grpo_training(
                 advantages=advantages,
                 rewards=rewards,
+                vlm_kl_coeff=self.vlm_kl_coeff,
+                vlm_kl_type=self.vlm_kl_type,
             )
             train_metrics = train_handle.wait()
 
@@ -375,7 +401,7 @@ class AgenticVLMVLARunner:
 
         for _step in range(start_step, self.max_steps):
             # Phase switching
-            if self.steps_in_current_phase >= self.alternating_interval:
+            if self.steps_in_current_phase >= self._current_phase_interval:
                 self._switch_phase()
 
             with self.timer("step"):
