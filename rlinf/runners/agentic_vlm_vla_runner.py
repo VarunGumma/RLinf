@@ -44,7 +44,7 @@ import queue
 import threading
 import time
 from collections import defaultdict
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 import torch
 from omegaconf.dictconfig import DictConfig
@@ -151,7 +151,9 @@ class AgenticVLMVLARunner:
             except Exception as e:
                 logger.warning("Logging error: %s", e)
 
-    def print_metrics_table_async(self, step, total_steps, start_time, metrics, start_step=0):
+    def print_metrics_table_async(
+        self, step, total_steps, start_time, metrics, start_step=0
+    ):
         self.log_queue.put(
             (print_metrics_table, (step, total_steps, start_time, metrics, start_step))
         )
@@ -310,7 +312,7 @@ class AgenticVLMVLARunner:
                 group_size=group_size,
                 output_channel=self.vlm_reward_input_channel,
             )
-            gen_results = gen_handle.wait()
+            gen_handle.wait()
 
         with self.timer("vlm/vla_reward"):
             # Evaluate each VLM output through the frozen VLA
@@ -347,7 +349,9 @@ class AgenticVLMVLARunner:
 
         return {
             "vlm/mean_reward": rewards.mean().item(),
-            "vlm/mean_advantage": advantages.mean().item() if advantages is not None else 0.0,
+            "vlm/mean_advantage": advantages.mean().item()
+            if advantages is not None
+            else 0.0,
             **{f"vlm_train/{k}": v for k, v in self._agg(train_metrics).items()},
         }
 

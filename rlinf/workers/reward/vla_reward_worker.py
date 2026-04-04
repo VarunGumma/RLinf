@@ -24,14 +24,13 @@ the VLM.
 
 import copy
 import os
-from typing import Optional
 
 import torch
-from omegaconf import DictConfig, open_dict
+from omegaconf import DictConfig
 
 from rlinf.algorithms.rewards.vla import VLALossReward
 from rlinf.models import get_model
-from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.utils import clear_memory
 
@@ -86,17 +85,17 @@ class VLARewardWorker(Worker):
         Expected input (dict on channel)::
 
             {
-                "vlm_texts": list[str],         # K VLM-generated text outputs
-                "instructions": list[str],       # original task instructions (len K)
-                "forward_inputs": dict,           # batched VLA forward_inputs (B=K)
+                "vlm_texts": list[str],  # K VLM-generated text outputs
+                "instructions": list[str],  # original task instructions (len K)
+                "forward_inputs": dict,  # batched VLA forward_inputs (B=K)
                 "ground_truth_actions": Tensor,  # [K, action_chunk, action_dim]
             }
 
         Output (dict on channel)::
 
             {
-                "rewards": Tensor,   # [K]  scalar rewards per sample
-                "vla_losses": Tensor, # [K]  raw VLA losses per sample
+                "rewards": Tensor,  # [K]  scalar rewards per sample
+                "vla_losses": Tensor,  # [K]  raw VLA losses per sample
             }
         """
         batch = input_channel.get()

@@ -19,8 +19,6 @@ serves as the reward signal.  Lower VLA loss means the VLM produced a better
 instruction for the VLA, so the reward is the negated loss.
 """
 
-import math
-
 import torch
 
 
