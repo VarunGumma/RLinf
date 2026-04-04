@@ -11,9 +11,9 @@ All notable changes to the **Agentic VLM + VLA** feature are documented below.
   `validate_agentic_vlm_vla_cfg()` config validator (`rlinf/config.py`).
 
 #### New VLM model support
-- Added **Qwen3-VL** (`QWEN3_VL`), **Qwen3-VL-MoE** (`QWEN3_VL_MOE`), and
-  **Gemma-4-VL** (`GEMMA4_VL`) to the `SupportedModel` enum as
-  `"reasoning"`-category models (`rlinf/config.py`).
+- Added **Qwen3-VL** (`QWEN3_VL`) and **Qwen3-VL-MoE** (`QWEN3_VL_MOE`) to
+  the `SupportedModel` enum as `"reasoning"`-category models
+  (`rlinf/config.py`).
 - Wired Liger-kernel fusions for `QWEN3_VL` and `QWEN3_VL_MOE` in the FSDP
   model manager (`rlinf/hybrid_engines/fsdp/fsdp_model_manager.py`).
 

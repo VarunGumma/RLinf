@@ -49,7 +49,6 @@ class SupportedModel(Enum):
     QWEN3_MOE = ("qwen3_moe", "reasoning")
     QWEN3_VL = ("qwen3_vl", "reasoning")
     QWEN3_VL_MOE = ("qwen3_vl_moe", "reasoning")
-    GEMMA4_VL = ("gemma4_vl", "reasoning")
 
     # Embodied models
     OPENVLA = ("openvla", "embodied")
