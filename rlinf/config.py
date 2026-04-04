@@ -1029,8 +1029,10 @@ def validate_agentic_vlm_vla_cfg(cfg: DictConfig) -> DictConfig:
     fields are present.
     """
     # The VLA side uses the same embodied model constraints
+    supported_embodied = [e.value for e in SupportedModel if e.category == "embodied"]
     assert get_supported_model(cfg.actor.model.model_type).category == "embodied", (
-        f"VLA actor model type '{cfg.actor.model.model_type}' must be an embodied model."
+        f"VLA actor model type '{cfg.actor.model.model_type}' must be an embodied model. "
+        f"Supported embodied models: {supported_embodied}."
     )
 
     with open_dict(cfg):

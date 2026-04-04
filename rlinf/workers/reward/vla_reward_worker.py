@@ -52,14 +52,19 @@ class VLARewardWorker(Worker):
     # ------------------------------------------------------------------
     def init_worker(self) -> None:
         """Load the frozen VLA model and set up the reward transform."""
-        torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        torch.cuda.set_device(local_rank)
         self.device = torch.cuda.current_device()
 
         # Build VLA model from the vla_reward config section
         vla_model_cfg = copy.deepcopy(self.cfg.vla_reward.model)
         self.vla_model: BasePolicy = get_model(vla_model_cfg)
         self.vla_model.eval()
-        self.vla_model.to(self.device)
+
+        # When offload is enabled the model lives on CPU between calls;
+        # otherwise it stays on GPU permanently.
+        if not self.enable_offload:
+            self.vla_model.to(self.device)
 
         # Freeze all parameters
         for param in self.vla_model.parameters():

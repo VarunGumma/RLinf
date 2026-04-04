@@ -129,7 +129,12 @@ env:
 
 # ---------------------------------------------------------------------------
 # VLA Rollout (HuggingFace rollout for action generation)
+# NOTE: Set vla_model_path below and all VLA paths will reference it.
 # ---------------------------------------------------------------------------
+# PLACEHOLDER: Replace with your actual VLA checkpoint path, e.g.
+# "s3://bucket/RLinf-Pi05-Libero-SFT" or a local path.
+vla_model_path: &vla_model_path "/path/to/vla/checkpoint"
+
 rollout:
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
@@ -137,7 +142,7 @@ rollout:
   enable_offload: False
   pipeline_stage_num: 1
   model:
-    model_path: "/path/to/vla/checkpoint"
+    model_path: *vla_model_path
     precision: null
 
 # ---------------------------------------------------------------------------
@@ -151,7 +156,7 @@ actor:
   seed: 0
   enable_offload: False
   model:
-    model_path: "/path/to/vla/checkpoint"
+    model_path: *vla_model_path
     model_type: "openpi"
     precision: null
     add_value_head: True
@@ -184,6 +189,7 @@ actor:
 
 # ---------------------------------------------------------------------------
 # VLM Actor (FSDP — trained in phase B with GRPO)
+# PLACEHOLDER: Replace with your actual VLM checkpoint path.
 # ---------------------------------------------------------------------------
 vlm_actor:
   group_name: "VLMActorGroup"
@@ -193,7 +199,7 @@ vlm_actor:
   seed: 0
   enable_offload: False
   model:
-    model_path: "/path/to/vlm/checkpoint"
+    model_path: "/path/to/vlm/checkpoint"  # e.g. Qwen2.5-VL model path
     model_type: "qwen2.5_vl"
     precision: "bf16"
   optim:
@@ -213,12 +219,13 @@ vlm_actor:
 
 # ---------------------------------------------------------------------------
 # VLA Reward (frozen VLA that scores VLM outputs during VLM training)
+# Uses the same VLA model as the actor — weights are synced at phase switch.
 # ---------------------------------------------------------------------------
 vla_reward:
   group_name: "VLARewardGroup"
   enable_offload: False
   model:
-    model_path: "/path/to/vla/checkpoint"
+    model_path: *vla_model_path
     model_type: "openpi"
     precision: null
     num_action_chunks: 5

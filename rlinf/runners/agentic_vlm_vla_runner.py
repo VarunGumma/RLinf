@@ -192,7 +192,16 @@ class AgenticVLMVLARunner:
                 self.vla_actor.load_checkpoint(vla_ckpt).wait()
             if os.path.exists(vlm_ckpt):
                 self.vlm_actor.load_checkpoint(vlm_ckpt).wait()
-            self.global_step = int(resume_dir.split("global_step_")[-1])
+            # Parse global_step from directory name (e.g. ".../global_step_42")
+            try:
+                step_str = resume_dir.rstrip("/").split("global_step_")[-1]
+                self.global_step = int(step_str)
+            except (ValueError, IndexError):
+                self.logger_inst.warning(
+                    "Could not parse global_step from resume_dir '%s'; "
+                    "starting from step 0.",
+                    resume_dir,
+                )
 
     # ------------------------------------------------------------------
     # Weight synchronisation helpers
@@ -325,9 +334,10 @@ class AgenticVLMVLARunner:
             rewards = reward_data["rewards"]  # [K]
 
         with self.timer("vlm/advantages"):
-            # Compute GRPO advantages within each group
-            # For embodied GRPO, rewards shape: [n_groups * group_size]
-            # We need a loss_mask of all ones (all valid)
+            # Compute GRPO advantages within each group.
+            # loss_mask shape is (seq_len=1, num_samples=K) because the
+            # reasoning-side preprocess expects (seq_len, batch) and all
+            # VLM outputs are valid (no padding).
             loss_mask = torch.ones(1, rewards.shape[0])
             advantages, returns = calculate_adv_and_returns(
                 task_type="reasoning",
