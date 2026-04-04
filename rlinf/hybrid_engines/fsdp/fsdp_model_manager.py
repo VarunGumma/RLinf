@@ -195,6 +195,8 @@ class FSDPModelManager:
             from liger_kernel.transformers import (
                 apply_liger_kernel_to_qwen2,
                 apply_liger_kernel_to_qwen2_5_vl,
+                apply_liger_kernel_to_qwen3_5,
+                apply_liger_kernel_to_qwen3_5_moe,
                 apply_liger_kernel_to_qwen3_moe,
                 apply_liger_kernel_to_qwen3_vl,
                 apply_liger_kernel_to_qwen3_vl_moe,
@@ -207,23 +209,33 @@ class FSDPModelManager:
                 "fused_linear_cross_entropy": True,
             }
 
+            # Qwen3.5 uses a hybrid attention architecture (Gated DeltaNet + Gated
+            # Attention) that does not support liger rope patching.
+            LIGER_QWEN3_5_KWARGS = {**LIGER_COMMON_KWARGS, "rope": False}
+
             _liger_func_by_model = {
                 SupportedModel.QWEN2_5: apply_liger_kernel_to_qwen2,
                 SupportedModel.QWEN2_5_VL: apply_liger_kernel_to_qwen2_5_vl,
                 SupportedModel.QWEN2_5_VL_SFT: apply_liger_kernel_to_qwen2_5_vl,
                 SupportedModel.QWEN3_VL: apply_liger_kernel_to_qwen3_vl,
                 SupportedModel.QWEN3_VL_SFT: apply_liger_kernel_to_qwen3_vl,
-                SupportedModel.QWEN3_5: apply_liger_kernel_to_qwen3_vl,
                 SupportedModel.QWEN3_MOE: apply_liger_kernel_to_qwen3_moe,
                 SupportedModel.QWEN3_VL_MOE: apply_liger_kernel_to_qwen3_vl_moe,
                 SupportedModel.QWEN3_VL_MOE_SFT: apply_liger_kernel_to_qwen3_vl_moe,
-                SupportedModel.QWEN3_5_MOE: apply_liger_kernel_to_qwen3_vl_moe,
             }
 
             MODEL_LIGER_KERNEL_APPLY_FUNC = {
                 model_type: (apply_fn, dict(LIGER_COMMON_KWARGS))
                 for model_type, apply_fn in _liger_func_by_model.items()
             }
+            MODEL_LIGER_KERNEL_APPLY_FUNC[SupportedModel.QWEN3_5] = (
+                apply_liger_kernel_to_qwen3_5,
+                LIGER_QWEN3_5_KWARGS,
+            )
+            MODEL_LIGER_KERNEL_APPLY_FUNC[SupportedModel.QWEN3_5_MOE] = (
+                apply_liger_kernel_to_qwen3_5_moe,
+                LIGER_QWEN3_5_KWARGS,
+            )
 
             model_type = get_supported_model(
                 self._cfg.model.get("model_type", "").lower()
