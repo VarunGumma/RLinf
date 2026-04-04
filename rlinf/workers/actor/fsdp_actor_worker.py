@@ -1351,7 +1351,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 forward_type=ForwardType.SFT,
             )
 
-        if isinstance(sft_losses, list | tuple):
+        if isinstance(sft_losses, (list, tuple)):
             sft_losses = torch.stack(sft_losses)
         elif not isinstance(sft_losses, torch.Tensor):
             sft_losses = torch.tensor(
