@@ -23,11 +23,11 @@ Usage
 
 Worker groups created
 ---------------------
-* **vla_actor**   – EmbodiedFSDPActor for VLA training (phase A)
-* **vla_rollout** – MultiStepRolloutWorker for VLA action generation
+* **vla_actor**   – EmbodiedFSDPActor for VLA supervised training (phase A)
+* **vla_rollout** – MultiStepRolloutWorker for VLA action generation (eval only)
 * **vlm_actor**   – FSDPActor for VLM training (phase B, GRPO)
-* **vla_reward**  – VLARewardWorker (frozen VLA that scores VLM outputs)
-* **env**         – EnvWorker for embodied environment interaction
+* **vla_reward**  – VLARewardWorker (frozen VLA that scores VLM outputs via action MSE)
+* **env**         – EnvWorker for evaluation
 """
 
 import json

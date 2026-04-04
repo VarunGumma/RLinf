@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Agentic VLM + VLA Runner — alternating GRPO / embodied training.
+"""Agentic VLM + VLA Runner — alternating GRPO / supervised training.
 
 Training protocol
 -----------------
@@ -25,15 +25,17 @@ The system contains two models:
 Training alternates between two phases every ``alternating_interval`` steps:
 
 **Phase A — VLA training** (``phase == "vla"``):
-    The VLM is frozen.  A single VLM output per prompt is generated and
+    The VLM is frozen.  A single VLM output per sample is generated and
     concatenated with the task instruction to form the VLA's text input.
-    The VLA is then trained with its native loss (flow-matching / CE) using
-    the standard embodied RL loop (env interaction → rollout → actor update).
+    The VLA is then trained with its native supervised loss (flow-matching
+    MSE for pi0/pi0.5, cross-entropy for pi0-fast) on demonstration data.
+    There are **no** environment rollouts in this phase.
 
 **Phase B — VLM training** (``phase == "vlm"``):
     The VLA is frozen.  For each prompt the VLM generates *K* rollout
     outputs (``group_size``).  Each output is evaluated by the frozen VLA
-    which computes its loss — the negated loss becomes the GRPO reward.
+    which predicts actions and computes the **MSE** between predicted and
+    ground-truth actions — the negated MSE becomes the GRPO reward.
     Advantages are computed within each group of K and the VLM is updated
     via a policy-gradient (GRPO) step.
 """
@@ -76,15 +78,18 @@ class AgenticVLMVLARunner:
     cfg : DictConfig
         Full Hydra config.
     vla_actor : EmbodiedFSDPActor
-        Worker group for the VLA (trained in phase A, frozen in phase B).
-    vla_rollout : MultiStepRolloutWorker
-        HuggingFace rollout worker for VLA action generation.
+        Worker group for the VLA (supervised training in phase A, frozen in
+        phase B).
     vlm_actor : FSDPActor
-        Worker group for the VLM (trained in phase B, frozen in phase A).
+        Worker group for the VLM (trained with GRPO in phase B, frozen in
+        phase A).
     vla_reward : VLARewardWorker
-        Frozen-VLA evaluator that converts VLA loss into GRPO rewards.
+        Frozen-VLA evaluator that computes action-MSE rewards for GRPO.
     env : EnvWorker
-        Environment worker group for embodied interaction.
+        Environment worker group (used for evaluation only).
+    vla_rollout : MultiStepRolloutWorker
+        HuggingFace rollout worker for VLA action generation during
+        evaluation.
     """
 
     def __init__(
@@ -108,10 +113,12 @@ class AgenticVLMVLARunner:
         self.phase: str = cfg.runner.get("initial_phase", "vla")
         self.steps_in_current_phase = 0
 
-        # Channels for embodied VLA training (phase A)
+        # Channels for VLA SFT training (phase A)
+        self.vla_sft_channel = Channel.create("VLASft")
+
+        # Channels for embodied evaluation
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
-        self.actor_channel = Channel.create("Actor")
 
         # Channels for VLM GRPO training (phase B)
         self.vlm_reward_input_channel = Channel.create("VLMRewardInput")
@@ -248,65 +255,59 @@ class AgenticVLMVLARunner:
         )
 
     # ------------------------------------------------------------------
-    # Phase A — VLA training (embodied RL loop)
+    # Phase A — VLA training (supervised with VLM-augmented prompts)
     # ------------------------------------------------------------------
     def _run_vla_training_step(self):
-        """One step of embodied VLA training (mirrors EmbodiedRunner.run body)."""
+        """One step of supervised VLA training with VLM-augmented prompts.
+
+        Flow
+        ----
+        1. VLM (frozen) generates a single text output per sample.
+        2. The generated text is concatenated with the original task
+           instruction to form the VLA's text input.
+        3. The VLA is trained with its native supervised loss
+           (flow-matching MSE for pi0/pi0.5, cross-entropy for pi0-fast)
+           against ground-truth demonstration actions.
+
+        No environment rollouts are performed in this phase.
+        """
         self.vla_actor.set_global_step(self.global_step)
-        self.vla_rollout.set_global_step(self.global_step)
 
-        with self.timer("vla/sync_weights"):
-            if self.vla_step % self.weight_sync_interval == 0:
-                self._sync_vla_weights_to_rollout()
-
-        with self.timer("vla/generate_rollouts"):
-            env_handle: Handle = self.env.interact(
-                input_channel=self.env_channel,
-                rollout_channel=self.rollout_channel,
-                reward_channel=None,
-                actor_channel=self.actor_channel,
+        with self.timer("vla/vlm_generate"):
+            # VLM generates one text output per sample (group_size=1).
+            # The VLM actor reads a batch of observations, generates text,
+            # augments the observations with the generated text, and puts
+            # the augmented SFT batch on the channel.
+            gen_handle: Handle = self.vlm_actor.generate_vlm_rollout(
+                group_size=1,
+                output_channel=self.vla_sft_channel,
             )
-            rollout_handle: Handle = self.vla_rollout.generate(
-                input_channel=self.rollout_channel,
-                output_channel=self.env_channel,
-            )
-            self.vla_actor.recv_rollout_trajectories(
-                input_channel=self.actor_channel
-            ).wait()
-            rollout_handle.wait()
-
-        with self.timer("vla/cal_adv"):
-            adv_metrics = self.vla_actor.compute_advantages_and_returns().wait()
+            gen_handle.wait()
 
         with self.timer("vla/train"):
-            train_handle: Handle = self.vla_actor.run_training()
+            # VLA actor reads the augmented batch from the channel and
+            # performs one supervised training step.
+            train_handle: Handle = self.vla_actor.run_sft_step(
+                input_channel=self.vla_sft_channel,
+            )
             train_metrics = train_handle.wait()
 
         self.vla_step += 1
 
-        # Collect env results for logging
-        env_results = env_handle.wait()
-        env_results_list = [r for r in env_results if r is not None]
-        env_metrics = compute_evaluate_metrics(env_results_list)
-        env_metrics = {f"env/{k}": v for k, v in env_metrics.items()}
-
-        return {
-            **{f"vla_rollout/{k}": v for k, v in self._agg(adv_metrics).items()},
-            **{f"vla_train/{k}": v for k, v in self._agg(train_metrics).items()},
-            **env_metrics,
-        }
+        return {f"vla_train/{k}": v for k, v in self._agg(train_metrics).items()}
 
     # ------------------------------------------------------------------
-    # Phase B — VLM training (GRPO with VLA-loss reward)
+    # Phase B — VLM training (GRPO with action-MSE reward)
     # ------------------------------------------------------------------
     def _run_vlm_training_step(self):
-        """One step of VLM GRPO training using frozen-VLA loss as reward.
+        """One step of VLM GRPO training using frozen-VLA action-MSE as reward.
 
         High-level flow
         ---------------
         1. VLM actor generates K text outputs per prompt (group rollout).
-        2. For each output the frozen VLA reward worker computes the VLA
-           loss → reward.
+        2. For each output the frozen VLA reward worker predicts actions
+           and computes the MSE between predicted and ground-truth actions.
+           This MSE is converted to a reward (lower MSE → higher reward).
         3. GRPO advantages are computed over each group of K rewards.
         4. The VLM actor is updated with the policy-gradient loss.
         """

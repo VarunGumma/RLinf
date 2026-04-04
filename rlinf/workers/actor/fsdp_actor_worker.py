@@ -1301,6 +1301,79 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 f"sft_loss_weight={self.sft_loss_weight:.6f}"
             )
 
+    # ------------------------------------------------------------------
+    # Standalone SFT training (used in agentic VLM+VLA Phase A)
+    # ------------------------------------------------------------------
+    @Worker.timer("run_sft_step")
+    def run_sft_step(self, input_channel: Channel) -> dict:
+        """Run one supervised training step on externally-provided data.
+
+        This is used during the VLA-training phase of the agentic VLM+VLA
+        setup.  The runner loads a batch of (observation, ground-truth
+        actions) from the SFT dataset, runs the frozen VLM to generate a
+        single text per sample, augments the observations with that text,
+        and passes the augmented data through *input_channel*.
+
+        Expected data on *input_channel*::
+
+            {
+                "observation": Observation dataclass (model-specific),
+                "actions": Tensor [B, action_horizon, action_dim],
+            }
+
+        Returns:
+            Aggregated metrics dict.
+        """
+        if self.is_weight_offloaded:
+            self.load_param_and_grad(self.device)
+        if self.is_optimizer_offloaded:
+            self.load_optimizer(self.device)
+
+        self.model.train()
+
+        batch = input_channel.get()
+        observation = batch["observation"]
+        actions = batch["actions"]
+
+        # Move to device
+        register_pytree_dataclasses(observation)
+        observation = _pytree.tree_map(
+            lambda x: x.to(self.device) if x is not None else x,
+            observation,
+        )
+        actions = actions.to(torch.float32).to(self.device)
+
+        self.optimizer.zero_grad()
+
+        with self.amp_context:
+            sft_losses = self.model(
+                data={"observation": observation, "actions": actions},
+                forward_type=ForwardType.SFT,
+            )
+
+        if isinstance(sft_losses, list | tuple):
+            sft_losses = torch.stack(sft_losses)
+        elif not isinstance(sft_losses, torch.Tensor):
+            sft_losses = torch.tensor(
+                sft_losses, device=self.device, dtype=torch.float32
+            )
+
+        loss = sft_losses.mean()
+        self.grad_scaler.scale(loss).backward()
+
+        grad_norm, lr_list = self.optimizer_step()
+        self.lr_scheduler.step()
+        self.optimizer.zero_grad()
+        clear_memory()
+
+        metrics = {
+            "actor/sft_loss": loss.detach().item(),
+            "actor/grad_norm": grad_norm,
+            "actor/lr": lr_list[0],
+        }
+        metrics = all_reduce_dict(metrics, op=torch.distributed.ReduceOp.AVG)
+        return metrics
+
     @Worker.timer("run_training")
     def run_training(self) -> None:
         """

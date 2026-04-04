@@ -12,23 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""VLA loss-as-reward for GRPO-based VLM training in the agentic VLM+VLA setup.
+"""VLA action-MSE reward for GRPO-based VLM training in the agentic VLM+VLA setup.
 
-When training the VLM with GRPO, the frozen VLA's loss on each VLM output
-serves as the reward signal.  Lower VLA loss means the VLM produced a better
-instruction for the VLA, so the reward is the negated loss.
+When training the VLM with GRPO, the frozen VLA predicts actions for each VLM
+output and the **MSE** between predicted actions and ground-truth actions
+serves as the loss signal.  Lower MSE means the VLM produced a better
+instruction for the VLA, so the reward is derived from the negated MSE.
 """
 
 import torch
 
 
 class VLALossReward:
-    """Converts VLA loss values into scalar rewards for GRPO.
+    """Converts VLA action-MSE values into scalar rewards for GRPO.
 
     Supported reward transforms:
 
-    * ``"negate"`` (default): ``reward = -loss``
-    * ``"exp_negate"``: ``reward = exp(-loss)``  (bounded in (0, 1])
+    * ``"negate"`` (default): ``reward = -mse``
+    * ``"exp_negate"``: ``reward = exp(-mse)``  (bounded in (0, 1])
 
     Args:
         cfg: Reward config (DictConfig or dict-like) with optional keys:
@@ -47,11 +48,11 @@ class VLALossReward:
         self,
         vla_losses: torch.Tensor,
     ) -> torch.Tensor:
-        """Compute rewards from VLA losses.
+        """Compute rewards from VLA action-MSE losses.
 
         Args:
-            vla_losses: Tensor of shape ``[K]`` containing per-sample VLA
-                losses (one per VLM rollout output).
+            vla_losses: Tensor of shape ``[K]`` containing per-sample
+                action-MSE values (one per VLM rollout output).
 
         Returns:
             Rewards tensor of the same shape.

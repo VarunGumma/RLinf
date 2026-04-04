@@ -16,10 +16,16 @@
 
 This worker holds a **frozen** VLA (OpenPI-based pi0/pi0.5/pi0-fast) model.
 Given a batch of VLM-generated text outputs, the corresponding observations,
-and the ground-truth actions, it runs the VLA forward pass to compute the
-flow-matching / CE loss for each sample, and converts those losses into
-rewards (via the VLALossReward transform) that are used by GRPO to train
-the VLM.
+and the ground-truth actions, it runs the VLA in inference mode to predict
+actions, then computes the **MSE** between the predicted actions and the
+ground-truth actions.  This per-sample MSE serves as the loss that is
+converted into rewards (via the VLALossReward transform) for GRPO training
+of the VLM.
+
+Note: the reward is *not* the VLA training loss (logprobs / cross-entropy),
+but the action-space MSE.  For autoregressive VLA models (e.g. pi0-fast)
+the predicted tokens are detokenised back to continuous actions before the
+MSE is computed.
 """
 
 import copy
@@ -36,7 +42,14 @@ from rlinf.utils.utils import clear_memory
 
 
 class VLARewardWorker(Worker):
-    """Frozen VLA model that scores VLM outputs by computing the VLA loss.
+    """Frozen VLA model that scores VLM outputs via action-space MSE.
+
+    During the VLM-training phase (GRPO) the VLM generates K candidate text
+    outputs per prompt.  For each candidate the frozen VLA predicts actions
+    given the candidate text and the current observation.  The per-sample
+    **MSE** between the predicted actions and the ground-truth actions is the
+    loss signal; it is then converted to a reward (lower MSE → higher reward)
+    by :class:`VLALossReward`.
 
     The worker is designed to be launched as a Ray worker group and called
     from the :class:`AgenticVLMVLARunner` during the VLM-training phase.
@@ -84,15 +97,18 @@ class VLARewardWorker(Worker):
         input_channel: Channel,
         output_channel: Channel,
     ) -> None:
-        """Read VLM outputs + observations from *input_channel*, compute VLA
-        loss-based rewards, and write them to *output_channel*.
+        """Read VLM outputs + observations from *input_channel*, compute
+        action-space MSE rewards, and write them to *output_channel*.
 
         Expected input (dict on channel)::
 
             {
-                "vlm_texts": list[str],  # K VLM-generated text outputs
-                "instructions": list[str],  # original task instructions (len K)
-                "forward_inputs": dict,  # batched VLA forward_inputs (B=K)
+                "env_obs": dict,  # raw observations with VLM text as
+                # task_descriptions.  Keys:
+                #   "main_images": [K, H, W, C]
+                #   "states": [K, state_dim]
+                #   "task_descriptions": list[str] (len K)
+                #   (optional) "wrist_images", "extra_view_images"
                 "ground_truth_actions": Tensor,  # [K, action_chunk, action_dim]
             }
 
@@ -100,15 +116,15 @@ class VLARewardWorker(Worker):
 
             {
                 "rewards": Tensor,  # [K]  scalar rewards per sample
-                "vla_losses": Tensor,  # [K]  raw VLA losses per sample
+                "vla_losses": Tensor,  # [K]  raw per-sample MSE values
             }
         """
         batch = input_channel.get()
 
-        forward_inputs = batch["forward_inputs"]
+        env_obs = batch["env_obs"]
         ground_truth_actions = batch["ground_truth_actions"]
 
-        vla_losses = self._compute_vla_losses(forward_inputs, ground_truth_actions)
+        vla_losses = self._compute_action_mse(env_obs, ground_truth_actions)
         rewards = self.reward_fn(vla_losses)
 
         output_channel.put(
@@ -118,7 +134,7 @@ class VLARewardWorker(Worker):
 
     def compute_vla_rewards_direct(
         self,
-        forward_inputs: dict,
+        env_obs: dict,
         ground_truth_actions: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Synchronous variant that returns rewards directly (no channels).
@@ -126,13 +142,19 @@ class VLARewardWorker(Worker):
         This is useful when the runner orchestrates communication itself rather
         than relying on channel-based messaging.
 
+        Args:
+            env_obs: Raw observations dict with VLM text already set in
+                ``task_descriptions``.  Same format as the ``"env_obs"``
+                field described in :meth:`compute_vla_rewards`.
+            ground_truth_actions: Ground-truth actions ``[K, action_chunk, action_dim]``.
+
         Returns:
             ``(rewards, vla_losses)`` both of shape ``[K]``.
         """
         if self.enable_offload:
             self.vla_model.to(self.device)
 
-        vla_losses = self._compute_vla_losses(forward_inputs, ground_truth_actions)
+        vla_losses = self._compute_action_mse(env_obs, ground_truth_actions)
         rewards = self.reward_fn(vla_losses)
 
         if self.enable_offload:
@@ -162,44 +184,58 @@ class VLARewardWorker(Worker):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _compute_vla_losses(
+    def _compute_action_mse(
         self,
-        forward_inputs: dict,
+        env_obs: dict,
         ground_truth_actions: torch.Tensor,
     ) -> torch.Tensor:
-        """Run frozen VLA forward and return per-sample losses.
+        """Run frozen VLA inference and return per-sample action MSE.
 
-        For flow-matching models (pi0, pi0.5) the default_forward returns
-        ``{"logprobs": ...}`` and the loss is ``-logprobs.mean(dim=-1)``.
-        For autoregressive models (pi0-fast) the loss is cross-entropy.
+        The frozen VLA predicts actions from ``env_obs`` (which already
+        contains the VLM-generated text in ``task_descriptions``).  The MSE
+        between the predicted actions and ``ground_truth_actions`` is
+        returned.  For autoregressive VLA models (e.g. pi0-fast) the
+        predicted action tokens are automatically detokenised back to
+        continuous space by the model's ``output_transform``.
+
+        Args:
+            env_obs: Raw observation dict.  Must contain at least
+                ``main_images``, ``states``, and ``task_descriptions``.
+            ground_truth_actions: Ground-truth actions of shape
+                ``[K, action_chunk, action_dim]``.
 
         Returns:
-            Losses of shape ``[K]``.
+            Per-sample MSE of shape ``[K]``.
         """
-        # Move inputs to device
-        forward_inputs_device = {}
-        for k, v in forward_inputs.items():
+        # Move observations to device
+        env_obs_device = {}
+        for k, v in env_obs.items():
             if isinstance(v, torch.Tensor):
-                forward_inputs_device[k] = v.to(self.device)
+                env_obs_device[k] = v.to(self.device)
             else:
-                forward_inputs_device[k] = v
+                env_obs_device[k] = v
         ground_truth_actions = ground_truth_actions.to(self.device)
 
         with torch.no_grad():
-            output = self.vla_model(
-                forward_inputs=forward_inputs_device,
-                compute_logprobs=True,
-                compute_entropy=False,
+            # predict_action_batch runs full inference (denoising for
+            # flow-matching, autoregressive decoding for token-based) and
+            # applies output_transform, returning actions in env space.
+            predicted_actions, _ = self.vla_model.predict_action_batch(
+                env_obs=env_obs_device,
+                mode="eval",
                 compute_values=False,
-                use_cache=False,
             )
 
-        # Compute per-sample loss from logprobs
-        logprobs = output["logprobs"]  # [K, action_chunk, action_dim] or [K, seq_len]
-        # Average over the non-batch dimensions to get per-sample scalar
-        if logprobs.dim() > 1:
-            per_sample_loss = -logprobs.reshape(logprobs.shape[0], -1).mean(dim=-1)
-        else:
-            per_sample_loss = -logprobs
+        # predicted_actions: [K, action_chunk, action_dim] (env-space)
+        # Reshape ground truth to match if necessary
+        if predicted_actions.shape != ground_truth_actions.shape:
+            ground_truth_actions = ground_truth_actions.reshape(predicted_actions.shape)
 
-        return per_sample_loss
+        # Per-sample MSE: average over action_chunk and action_dim
+        per_sample_mse = (
+            (predicted_actions - ground_truth_actions)
+            .pow(2)
+            .mean(dim=tuple(range(1, predicted_actions.dim())))
+        )
+
+        return per_sample_mse
