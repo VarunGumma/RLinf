@@ -25,7 +25,11 @@ def get_tp_reshard_fn(model_type: str):
         return tp_reshard_fn_qwen2_5
     elif model_type == SupportedModel.QWEN3:
         return tp_reshard_fn_qwen3_dense
+    elif model_type == SupportedModel.QWEN3_5:
+        return tp_reshard_fn_qwen3_dense
     elif model_type == SupportedModel.QWEN3_MOE:
+        return tp_reshard_fn_qwen3_moe
+    elif model_type == SupportedModel.QWEN3_5_MOE:
         return tp_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
@@ -36,6 +40,8 @@ def get_tp_reshard_fn(model_type: str):
 def get_tpe_reshard_fn(model_type: str):
     model_type = get_supported_model(model_type)
     if model_type == SupportedModel.QWEN3_MOE:
+        return tpe_reshard_fn_qwen3_moe
+    elif model_type == SupportedModel.QWEN3_5_MOE:
         return tpe_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(
@@ -49,7 +55,11 @@ def get_pp_reshard_fn(model_type: str):
         return pp_reshard_fn_qwen2_5
     elif model_type == SupportedModel.QWEN3:
         return pp_reshard_fn_qwen3_dense
+    elif model_type == SupportedModel.QWEN3_5:
+        return pp_reshard_fn_qwen3_dense
     elif model_type == SupportedModel.QWEN3_MOE:
+        return pp_reshard_fn_qwen3_moe
+    elif model_type == SupportedModel.QWEN3_5_MOE:
         return pp_reshard_fn_qwen3_moe
     else:
         raise NotImplementedError(

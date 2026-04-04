@@ -625,7 +625,9 @@ _MG2HF_CONVERTOR_REGISTRY = {
     SupportedModel.QWEN2_5: Qwen25Convertor,
     SupportedModel.QWEN2_5_VL: Qwen25VLConvertor,
     SupportedModel.QWEN3: Qwen3DenseConvertor,
+    SupportedModel.QWEN3_5: Qwen3DenseConvertor,
     SupportedModel.QWEN3_MOE: Qwen3MoEConvertor,
+    SupportedModel.QWEN3_5_MOE: Qwen3MoEConvertor,
 }
 
 

@@ -118,6 +118,13 @@ explict_model:
     head_dim: 128
     num_layers: 40
     tie_word_embeddings: False
+  'Qwen3.5-4B':
+    model_type: qwen_3_5
+    num_attention_heads: 32
+    num_query_groups: 8
+    head_dim: 128
+    num_layers: 36
+    tie_word_embeddings: True
 
 model_type:
   deepseek:
@@ -144,6 +151,17 @@ model_type:
     use_qk_norm: True
     use_qkv_bias: False
   qwen_3_moe:
+    attn_type: gqa
+    mlp_type: moe
+    use_qk_norm: True
+    use_qkv_bias: False
+    use_shared_experts: False
+  qwen_3_5:
+    attn_type: gqa
+    mlp_type: dense
+    use_qk_norm: True
+    use_qkv_bias: False
+  qwen_3_5_moe:
     attn_type: gqa
     mlp_type: moe
     use_qk_norm: True

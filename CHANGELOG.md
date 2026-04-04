@@ -14,7 +14,13 @@ All notable changes to the **Agentic VLM + VLA** feature are documented below.
 - Added **Qwen3-VL** (`QWEN3_VL`) and **Qwen3-VL-MoE** (`QWEN3_VL_MOE`) to
   the `SupportedModel` enum as `"reasoning"`-category models
   (`rlinf/config.py`).
+- Added **Qwen3.5** family support: dense (`QWEN3_5`), MoE (`QWEN3_5_MOE`),
+  VL (`QWEN3_5_VL`), VL-MoE (`QWEN3_5_VL_MOE`), and their SFT aliases
+  (`QWEN3_5_VL_SFT`, `QWEN3_5_VL_MOE_SFT`) to the `SupportedModel` enum
+  (`rlinf/config.py`).
 - Wired Liger-kernel fusions for `QWEN3_VL` and `QWEN3_VL_MOE` in the FSDP
+  model manager (`rlinf/hybrid_engines/fsdp/fsdp_model_manager.py`).
+- Wired Liger-kernel fusions for all Qwen3.5 VL/MoE variants in the FSDP
   model manager (`rlinf/hybrid_engines/fsdp/fsdp_model_manager.py`).
 
 #### Runner — `AgenticVLMVLARunner`

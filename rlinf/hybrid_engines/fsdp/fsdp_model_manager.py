@@ -213,9 +213,14 @@ class FSDPModelManager:
                 SupportedModel.QWEN2_5_VL_SFT: apply_liger_kernel_to_qwen2_5_vl,
                 SupportedModel.QWEN3_VL: apply_liger_kernel_to_qwen3_vl,
                 SupportedModel.QWEN3_VL_SFT: apply_liger_kernel_to_qwen3_vl,
+                SupportedModel.QWEN3_5_VL: apply_liger_kernel_to_qwen3_vl,
+                SupportedModel.QWEN3_5_VL_SFT: apply_liger_kernel_to_qwen3_vl,
                 SupportedModel.QWEN3_MOE: apply_liger_kernel_to_qwen3_moe,
+                SupportedModel.QWEN3_5_MOE: apply_liger_kernel_to_qwen3_moe,
                 SupportedModel.QWEN3_VL_MOE: apply_liger_kernel_to_qwen3_vl_moe,
                 SupportedModel.QWEN3_VL_MOE_SFT: apply_liger_kernel_to_qwen3_vl_moe,
+                SupportedModel.QWEN3_5_VL_MOE: apply_liger_kernel_to_qwen3_vl_moe,
+                SupportedModel.QWEN3_5_VL_MOE_SFT: apply_liger_kernel_to_qwen3_vl_moe,
             }
 
             MODEL_LIGER_KERNEL_APPLY_FUNC = {
