@@ -190,6 +190,7 @@ actor:
 # ---------------------------------------------------------------------------
 # VLM Actor (FSDP — trained in phase B with GRPO)
 # PLACEHOLDER: Replace with your actual VLM checkpoint path.
+# Supported VLM model types: qwen2.5_vl, qwen3_vl, qwen3_vl_moe, gemma4_vl
 # ---------------------------------------------------------------------------
 vlm_actor:
   group_name: "VLMActorGroup"
@@ -199,8 +200,8 @@ vlm_actor:
   seed: 0
   enable_offload: False
   model:
-    model_path: "/path/to/vlm/checkpoint"  # e.g. Qwen2.5-VL model path
-    model_type: "qwen2.5_vl"
+    model_path: "/path/to/vlm/checkpoint"  # e.g. Qwen3-VL, Qwen2.5-VL, or Gemma-4 VL path
+    model_type: "qwen3_vl"
     precision: "bf16"
   optim:
     lr: 1.0e-5
