@@ -71,8 +71,11 @@ def get_model(cfg: DictConfig, torch_dtype=None) -> OpenPiFastForRLActionPredict
         config_name, model_path=cfg.model_path, data_kwargs=data_kwargs
     )
 
-    # Build OpenPiFastConfig from the resolved openpi TrainConfig, then apply
-    # any per-key overrides specified under cfg.openpi.
+    # openpi_model_config is the Pi0FASTConfig from openpi (has model_type=PI0_FAST),
+    # used for data config creation so transforms dispatch correctly.
+    openpi_model_config = actor_train_config.model
+
+    # Build OpenPiFastConfig from defaults, then apply per-key overrides from cfg.
     fast_model_config = OpenPiFastConfig(
         config_name=config_name,
     )
@@ -124,7 +127,7 @@ def get_model(cfg: DictConfig, torch_dtype=None) -> OpenPiFastForRLActionPredict
     # Set up input / output transforms
     # -----------------------------------------------------------------------
     data_config = actor_train_config.data.create(
-        actor_train_config.assets_dirs, fast_model_config
+        actor_train_config.assets_dirs, openpi_model_config
     )
     norm_stats = None
     if data_config.asset_id is None:

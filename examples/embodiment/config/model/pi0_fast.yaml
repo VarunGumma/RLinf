@@ -1,0 +1,32 @@
+model_type: "openpi_fast"
+
+# Model path — override in specific run configs.
+model_path: "/path/to/model/pi0_fast_base"
+
+# Precision: null so weights stay in their native bfloat16/fp32 mix.
+precision: null
+
+# Action and chunk settings (must match the environment).
+num_action_chunks: 10
+action_dim: 7
+
+# Pi0-Fast does not use denoising steps.
+num_steps: 1
+
+# Optional value head for PPO critic.
+add_value_head: False
+
+# Pi0-Fast specific parameters (forwarded to OpenPiFastConfig).
+openpi:
+  config_name: "pi0_fast_libero"
+  num_images_in_input: 2
+  # Autoregressive generation budget (tokens per action chunk).
+  max_new_tokens: 128
+  action_chunk: ${actor.model.num_action_chunks}
+  action_env_dim: ${actor.model.action_dim}
+  paligemma_variant: "gemma_2b"
+  train_expert_only: True
+  add_value_head: ${actor.model.add_value_head}
+  # Log-prob shape: chunk_level (sum over all generated tokens per step).
+  logprob_type: "chunk_level"
+  single_action_dim: 1

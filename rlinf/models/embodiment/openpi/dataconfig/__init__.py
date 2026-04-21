@@ -18,6 +18,7 @@ import difflib
 from typing import Optional
 
 import openpi.models.pi0_config as pi0_config
+import openpi.models.pi0_fast as pi0_fast
 import openpi.training.optimizer as _optimizer
 import openpi.training.weight_loaders as weight_loaders
 from openpi.training.config import (
@@ -396,6 +397,57 @@ _CONFIGS = [
             "checkpoints/jax/pi05_base/params"
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    # -------------------------------------------------------------------
+    # Pi0-Fast configs (autoregressive with FAST tokenizer)
+    # -------------------------------------------------------------------
+    TrainConfig(
+        name="pi0_fast_libero",
+        model=pi0_fast.Pi0FASTConfig(
+            action_dim=7,
+            action_horizon=10,
+        ),
+        data=LeRobotLiberoDataConfig(
+            repo_id="physical-intelligence/libero",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi0_fast_libero/assets"
+            ),
+            extra_delta_transform=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_fast_base",
+    ),
+    TrainConfig(
+        name="pi0_fast_maniskill",
+        model=pi0_fast.Pi0FASTConfig(
+            action_dim=7,
+            action_horizon=10,
+        ),
+        data=LeRobotManiSkillDataConfig(
+            repo_id="physical-intelligence/maniskill",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi0_fast_maniskill/assets"
+            ),
+            extra_delta_transform=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_fast_base",
+    ),
+    TrainConfig(
+        name="pi0_fast_metaworld",
+        model=pi0_fast.Pi0FASTConfig(
+            action_dim=4,
+            action_horizon=5,
+        ),
+        data=LeRobotMetaworldDataConfig(
+            repo_id="lerobot/metaworld_mt50",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi0_fast_metaworld/assets"
+            ),
+            extra_delta_transform=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_fast_base",
     ),
 ]
 

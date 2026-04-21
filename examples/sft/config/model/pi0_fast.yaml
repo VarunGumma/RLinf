@@ -1,0 +1,29 @@
+model_type: "openpi_fast"
+
+# Model path — override in specific run configs.
+model_path: "/path/to/model/pi0_fast_base"
+
+precision: null
+
+# Action and chunk settings (must match the dataset).
+num_action_chunks: 10
+action_dim: 7
+
+# Pi0-Fast does not use denoising steps.
+num_steps: 1
+
+# Set to False for full SFT fine-tuning of PaliGemma.
+add_value_head: False
+
+# Pi0-Fast specific parameters (forwarded to OpenPiFastConfig).
+openpi:
+  config_name: "pi0_fast_libero"
+  num_images_in_input: 2
+  max_new_tokens: 128
+  action_chunk: ${actor.model.num_action_chunks}
+  action_env_dim: ${actor.model.action_dim}
+  paligemma_variant: "gemma_2b"
+  train_expert_only: False
+  add_value_head: ${actor.model.add_value_head}
+  logprob_type: "chunk_level"
+  single_action_dim: 1
